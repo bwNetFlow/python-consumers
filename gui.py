@@ -54,7 +54,9 @@ class Screen():
         self.w_avgs = curses.newwin(3+2, 40, 0, 0)
         self.w_dir = curses.newwin(3+2, 40, 10, 0)
         self.w_proto = curses.newwin(5+2, 40, 8, 40)
-        self.winlist = [self.w_geo, self.w_proto, self.w_afi, self.w_avgs, self.w_dir]
+        self.w_as = curses.newwin(6+2, 40, 15, 0)
+        self.w_peer = curses.newwin(6+2, 40, 15, 40)
+        self.winlist = [self.w_geo, self.w_proto, self.w_afi, self.w_avgs, self.w_dir, self.w_as, self.w_peer]
 
         curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
         self.w_avgs.addstr(1, 1, " "*38, curses.color_pair(1))
@@ -77,6 +79,8 @@ class Screen():
         self.w_afi.addstr(0, 2, "Address Family")
         self.w_avgs.addstr(0, 2, "Totals")
         self.w_dir.addstr(0, 2, "Direction")
+        self.w_as.addstr(0, 2, "AS")
+        self.w_peer.addstr(0, 2, "Peers")
         self.stdscr.refresh()
         for win in self.winlist:
             win.refresh()
@@ -110,6 +114,16 @@ class Screen():
         self.w_avgs.addstr(2, 1, "Packets: {0:.2f}/s".format(silo.c_packets['total']/silo.resolution))
         self.w_avgs.addstr(3, 1, "  Flows: {0:.2f}/s".format(silo.c_flows['total']/silo.resolution))
 
+        # as window
+        sorted_as = sorted(silo.c_as.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        for num, (name, bitcount) in enumerate(sorted_as, start=1):
+            self.w_as.addstr(num, 1, "{0: >10}: {1: >5.2f}% - {2:.2f} Mbit/s".format(name[:10] if name else 'other', bitcount/silo.c_bits['total']*100, bitcount/1024**2/silo.resolution))
+
+        # peer windows
+        sorted_peer = sorted(silo.c_peer.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        for num, (name, bitcount) in enumerate(sorted_peer, start=1):
+            self.w_peer.addstr(num, 1, "{0: >10}: {1: >5.2f}% - {2:.2f} Mbit/s".format(name[:10] if name else 'other', bitcount/silo.c_bits['total']*100, bitcount/1024**2/silo.resolution))
+
         # direction window
         try:
             self.w_dir.addstr(1, 1, "     In: {0: >5.2f}% - {1:.2f} Mbit/s".format(silo.c_bits['in']/silo.c_bits['total']*100, silo.c_bits['in']/1024**2/silo.resolution))
@@ -130,6 +144,24 @@ class Silo():
         self.c_bits = defaultdict(int)
         self.c_packets = defaultdict(int)
         self.c_geo = defaultdict(int)
+        self.c_as = defaultdict(int)
+        self.c_peer = defaultdict(int)
+        self.ases = {
+                'limelight': 22822,
+                'cloudflare': 13335,
+                'hetzner': 24940,
+                'netflix': 2906,
+                'ovh': 16276,
+                'github': 36459,
+                'youtube': 36561,
+                'amazon': 16509,
+                'blizzard': 57976,
+                'dtag': 3320,
+                'shadowc': 64476,
+                'steam': 32590,
+                'vzffnrmoev': 202329,
+                'microsoft': 8075,
+                'spotify': 8403 }
 
     def reset(self):
         self.__init__(self.resolution)
@@ -157,14 +189,24 @@ class Silo():
             self.c_flows['in'] += 1
             self.c_bits['in'] += flowmsg.Bytes*8
             self.c_packets['in'] += flowmsg.Packets
+            self.c_peer[flowmsg.SrcIfDesc] += flowmsg.Bytes*8
         elif flowmsg.FlowDirection == 1:
             self.c_flows['out'] += 1
             self.c_bits['out'] += flowmsg.Bytes*8
             self.c_packets['out'] += flowmsg.Packets
+            self.c_peer[flowmsg.DstIfDesc] += flowmsg.Bytes*8
         else:
             self.c_flows['odir'] += 1
             self.c_bits['odir'] += flowmsg.Bytes*8
             self.c_packets['odir'] += flowmsg.Packets
+
+        for name, asn in self.ases.items():
+            if flowmsg.SrcAS == asn or flowmsg.DstAS == asn:
+                self.c_as[name] += flowmsg.Bytes*8
+                break
+        else:
+            self.c_as['other'] += flowmsg.Bytes*8
+
 
         self.c_geo[flowmsg.RemoteCountry] += flowmsg.Bytes*8
     # }}}
